@@ -1,7 +1,7 @@
 import os
 import json
 from openai import OpenAI
-from nlq.config import Settings
+from nlq.config import Settings, get_secret
 
 # 1) Prompt to generate SQL only
 SQL_SYSTEM_PROMPT = """
@@ -63,20 +63,20 @@ class ClaudeNLQAgent:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = get_secret("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY not found in .env")
+            raise ValueError("OPENAI_API_KEY not found in environment variables, Streamlit secrets, or .env")
 
         self.client = OpenAI(api_key=api_key)
 
         # Read models from .env with defaults
-        self.primary_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        self.fallback_model = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        self.primary_model = get_secret("OPENAI_MODEL", "gpt-4o-mini")
+        self.fallback_model = get_secret("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
 
         # Token safety limits
-        self.max_tokens_sql = int(os.getenv("OPENAI_MAX_TOKENS_SQL", "220"))
-        self.max_tokens_answer = int(os.getenv("OPENAI_MAX_TOKENS_ANSWER", "220"))
-        self.max_tokens_repair = int(os.getenv("OPENAI_MAX_TOKENS_REPAIR", "300"))
+        self.max_tokens_sql = int(get_secret("OPENAI_MAX_TOKENS_SQL", "220"))
+        self.max_tokens_answer = int(get_secret("OPENAI_MAX_TOKENS_ANSWER", "220"))
+        self.max_tokens_repair = int(get_secret("OPENAI_MAX_TOKENS_REPAIR", "300"))
 
     def _call_model(self, model_name: str, system_prompt: str, user_message: str, max_tokens: int):
         return self.client.chat.completions.create(
