@@ -504,6 +504,12 @@ Rules:
 with tab_excel:
     if "excel_history" not in st.session_state:
         st.session_state.excel_history = []
+    if "excel_last_rows" not in st.session_state:
+        st.session_state.excel_last_rows = []
+    if "excel_last_sql" not in st.session_state:
+        st.session_state.excel_last_sql = ""
+    if "excel_last_table" not in st.session_state:
+        st.session_state.excel_last_table = ""
 
     excel_header_col, excel_action_col = st.columns([6, 1])
     with excel_header_col:
@@ -511,6 +517,9 @@ with tab_excel:
     with excel_action_col:
         if st.button("Restart", key="reset_excel"):
             st.session_state.excel_history = []
+            st.session_state.excel_last_rows = []
+            st.session_state.excel_last_sql = ""
+            st.session_state.excel_last_table = ""
             st.rerun()
 
     st.subheader("Upload Excel (columns + formulas) → Generate SQL → Run on MySQL")
@@ -519,11 +528,6 @@ with tab_excel:
     sheet_name = st.text_input("Sheet name (optional)", value="")
     where_clause = st.text_input("Optional WHERE clause (without WHERE)", value="")
     limit_rows = st.number_input("Rows to return", min_value=1, max_value=200, value=10)
-    excel_result_question = st.text_input(
-        "Ask a question about the generated result (optional)",
-        value="",
-        placeholder="Example: Which materials are below safety stock?",
-    )
 
     if not uploaded:
         st.info("Upload an Excel file to start.")
@@ -562,7 +566,7 @@ with tab_excel:
                 rows = []
                 st.session_state.excel_history.append({
                     "role": "user",
-                    "content": build_excel_user_message(uploaded.name, selected_table, excel_result_question),
+                    "content": build_excel_user_message(uploaded.name, selected_table, ""),
                 })
                 query_logger.info(
                     "schema_context",
@@ -572,7 +576,6 @@ with tab_excel:
                     excel_headers=excel_info["headers"],
                     excel_formulas=formulas,
                     where_clause=where_clause.strip(),
-                    excel_result_question=excel_result_question.strip(),
                     limit_rows=int(limit_rows),
                 )
                 query_logger.info(
@@ -644,6 +647,9 @@ Optional filter:
 
                     rows = run_query(settings, sql2)
                     df = pd.DataFrame(rows)
+                    st.session_state.excel_last_rows = rows
+                    st.session_state.excel_last_sql = sql2
+                    st.session_state.excel_last_table = selected_table
                     query_logger.success(
                         "sql_executed",
                         sql=sql2,
@@ -651,17 +657,10 @@ Optional filter:
                         rows_preview=rows[:5],
                     )
 
-                    # Human response
-                    human = agent.human_answer(
-                        question=excel_result_question.strip() or "Excel template query",
-                        sql_executed=sql2,
-                        rows=rows,
-                        extra_notes="Explain computed columns clearly if present."
-                    )
+                    human = f"Generated `{len(rows)}` row(s) from the Excel template."
                     query_logger.success("human_response_generated", response=human)
 
                     st.markdown(human)
-                    render_visualization_if_requested(excel_result_question.strip(), rows, query_logger)
 
                     if not df.empty:
                         st.dataframe(df, use_container_width=True, hide_index=True)
@@ -698,6 +697,9 @@ Optional filter:
                         query_logger.success("sql_repaired", repaired_sql=sql_retry)
                         rows = run_query(settings, sql_retry)
                         df = pd.DataFrame(rows)
+                        st.session_state.excel_last_rows = rows
+                        st.session_state.excel_last_sql = sql_retry
+                        st.session_state.excel_last_table = selected_table
                         query_logger.success(
                             "sql_executed_after_repair",
                             sql=sql_retry,
@@ -705,16 +707,10 @@ Optional filter:
                             rows_preview=rows[:5],
                         )
 
-                        human = agent.human_answer(
-                            question=excel_result_question.strip() or "Excel template query",
-                            sql_executed=sql_retry,
-                            rows=rows,
-                            extra_notes="Explain computed columns clearly if present.",
-                        )
+                        human = f"Generated `{len(rows)}` row(s) from the Excel template."
                         query_logger.success("human_response_generated", response=human)
 
                         st.markdown(human)
-                        render_visualization_if_requested(excel_result_question.strip(), rows, query_logger)
                         if not df.empty:
                             st.dataframe(df, use_container_width=True, hide_index=True)
                         else:
@@ -731,5 +727,44 @@ Optional filter:
                     "role": "assistant",
                     "content": human if "human" in locals() else "No response generated.",
                     "rows": rows if "rows" in locals() else [],
-                    "visualization_question": excel_result_question.strip(),
+                    "visualization_question": "",
                 })
+
+            if st.session_state.excel_last_rows:
+                st.divider()
+                followup_question = st.text_input(
+                    "Ask a question about the generated result",
+                    key="excel_followup_question",
+                    placeholder="Example: Which materials are below safety stock? Show a plot by material type.",
+                )
+
+                if st.button("Ask About Generated Result"):
+                    followup_question = followup_question.strip()
+                    if followup_question:
+                        query_logger = QueryLogger(followup_question, channel="excel")
+                        st.session_state.excel_history.append({
+                            "role": "user",
+                            "content": followup_question,
+                        })
+                        query_logger.info(
+                            "excel_followup_context",
+                            selected_table=st.session_state.excel_last_table,
+                            sql_executed=st.session_state.excel_last_sql,
+                            row_count=len(st.session_state.excel_last_rows),
+                        )
+
+                        human = agent.human_answer(
+                            question=followup_question,
+                            sql_executed=st.session_state.excel_last_sql,
+                            rows=st.session_state.excel_last_rows,
+                            extra_notes="Answer only from the generated result rows and explain computed columns clearly if present.",
+                        )
+                        query_logger.success("human_response_generated", response=human)
+
+                        st.session_state.excel_history.append({
+                            "role": "assistant",
+                            "content": human,
+                            "rows": st.session_state.excel_last_rows,
+                            "visualization_question": followup_question,
+                        })
+                        st.rerun()
