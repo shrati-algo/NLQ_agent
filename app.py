@@ -43,6 +43,7 @@ def wants_visualization(question: str) -> bool:
     visualization_terms = [
         "plot", "chart", "graph", "visual", "visualize", "visualise",
         "bar chart", "line chart", "scatter", "histogram", "pie chart",
+        "pie graph", "pie plot", "donut chart", "doughnut chart",
         "trend", "distribution",
     ]
     return any(term in q for term in visualization_terms)
@@ -90,14 +91,22 @@ def parse_visualization_request(df: pd.DataFrame, question: str) -> dict:
     categorical_cols = [col for col in df.columns if col not in numeric_cols]
 
     chart_type = "bar"
-    if "scatter" in q:
+    explicit_chart_type = None
+    if any(term in q for term in ["pie chart", "pie graph", "pie plot", "donut chart", "doughnut chart"]):
+        chart_type = "pie"
+        explicit_chart_type = "pie"
+    elif "scatter" in q:
         chart_type = "scatter"
+        explicit_chart_type = "scatter"
     elif "histogram" in q or "distribution" in q:
         chart_type = "histogram"
-    elif "pie" in q:
-        chart_type = "pie"
+        explicit_chart_type = "histogram"
     elif "line" in q or "trend" in q:
         chart_type = "line"
+        explicit_chart_type = "line"
+    elif "bar chart" in q or re.search(r"\bbar\b", q):
+        chart_type = "bar"
+        explicit_chart_type = "bar"
 
     top_n = None
     top_match = re.search(r"\btop\s+(\d+)\b", q)
@@ -144,6 +153,7 @@ def parse_visualization_request(df: pd.DataFrame, question: str) -> dict:
 
     return {
         "chart_type": chart_type,
+        "explicit_chart_type": explicit_chart_type,
         "x_col": x_col,
         "y_col": y_col,
         "top_n": top_n,
@@ -157,6 +167,7 @@ def build_visualization(df: pd.DataFrame, question: str):
     numeric_cols = list(df.select_dtypes(include="number").columns)
     request = parse_visualization_request(df, question)
     chart_type = request["chart_type"]
+    explicit_chart_type = request["explicit_chart_type"]
     x_col = request["x_col"]
     y_col = request["y_col"]
     top_n = request["top_n"]
@@ -204,6 +215,9 @@ def build_visualization(df: pd.DataFrame, question: str):
                 else:
                     fig = px.bar(grouped_df, x=x_col, y=y_col, title=f"{y_col} by {x_col}")
                 return fig, None, request
+
+        if explicit_chart_type:
+            return None, f"Could not build the requested {explicit_chart_type} chart from the current result.", request
 
         if numeric_cols:
             fig = px.histogram(plot_df, x=numeric_cols[0], title=f"Distribution of {numeric_cols[0]}")
